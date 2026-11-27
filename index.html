@@ -2454,9 +2454,13 @@
         event.target.value = '';
 
         if (rowsToSave.length > 0) {
+          const dedupMap = new Map();
+          rowsToSave.forEach(r => dedupMap.set(r.id, r));
+          const uniqueRows = Array.from(dedupMap.values());
+
           const { error } = await supabaseClient
             .from('products')
-            .upsert(rowsToSave, { onConflict: 'id' });
+            .upsert(uniqueRows, { onConflict: 'id' });
 
           if (error) {
             console.error('寫入 Supabase products 失敗：', error);
