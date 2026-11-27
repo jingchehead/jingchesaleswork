@@ -3552,7 +3552,7 @@
       document.getElementById('form-o-price').value = sum;
     }
 
-   function addOrderItemRow(prefill = null) {
+    function addOrderItemRow(prefill = null) {
       const container = document.getElementById('form-o-items-container');
       const row = document.createElement('div');
       row.className = 'order-item-row bg-black/30 p-2.5 rounded-xl border border-white/10 space-y-2';
@@ -3564,6 +3564,7 @@
 
       const initSkuModel = prefill && prefill.sku !== undefined ? prefill.sku : (selectedProd ? (selectedProd.sku || selectedProd.model || '') : '');
       const initProdName = prefill && prefill.productName !== undefined ? prefill.productName : (selectedProd ? (selectedProd.name || '') : '');
+      const rowIdx = Date.now() + '_' + (container.children.length + 1);
       const skuDatalistOpts = DB_PRODUCTS.map(p => {
         const code = p.sku || p.model || '';
         return `<option value="${code}">${p.name}</option>`;
@@ -3571,8 +3572,8 @@
 
       row.innerHTML = `
         <div class="flex flex-wrap sm:flex-nowrap items-center gap-2">
-          <input type="text" list="order-sku-datalist-${container.children.length + 1}" value="${initSkuModel}" placeholder="SKU 或產品型號 (可選或輸入)" class="w-44 apple-input px-2.5 py-2 text-xs text-cyan-300 font-mono item-sku-model">
-          <datalist id="order-sku-datalist-${container.children.length + 1}">${skuDatalistOpts}</datalist>
+          <input type="text" list="order-sku-datalist-${rowIdx}" value="${initSkuModel}" placeholder="SKU 或產品型號 (可選或輸入)" class="w-44 apple-input px-2.5 py-2 text-xs text-cyan-300 font-mono item-sku-model">
+          <datalist id="order-sku-datalist-${rowIdx}">${skuDatalistOpts}</datalist>
           <input type="text" value="${initProdName}" placeholder="商品名稱 (自動帶出)" class="flex-1 apple-input px-2.5 py-2 text-xs text-white item-prod-name">
           <select class="w-48 apple-input px-2.5 py-2 text-xs text-white item-prod">${opts}</select>
           <button type="button" onclick="this.closest('.order-item-row').remove(); recalculateOrderTotalFromItems();" class="text-rose-400 hover:text-rose-300 px-2 py-1 text-xs">✕</button>
@@ -3686,54 +3687,6 @@
         const qty = parseInt(r.querySelector('.item-qty').value) || 1;
         const unitPrice = parseFloat(r.querySelector('.item-unit-price')?.value) || 0;
         items.push({ productId: pid, sku: skuOrModel, productName: prodName, qty, unitPrice });
-      });
-
-      if (editId) {
-        const orig = DB_ORDERS.find(x => x.id === editId);
-        const updatePayload = { channel, code, customer, phone, address, price, items };
-        if (existingStatus === '已出貨' || existingStatus === '已退貨') {
-          const sDate = document.getElementById('form-o-shipdate').value;
-          const carrier = document.getElementById('form-o-carrier').value;
-          const tracking = document.getElementById('form-o-tracking').value.trim();
-          updatePayload.ship_date = sDate; updatePayload.carrier = carrier; updatePayload.tracking_code = tracking;
-          if (orig) { orig.shipDate = sDate; orig.carrier = carrier; orig.trackingCode = tracking; }
-        }
-        await supabaseClient.from('orders').update(updatePayload).eq('id', editId);
-        if (orig) Object.assign(orig, updatePayload);
-        closeCreateOrderModal();
-        renderOrdersTable();
-        alert(`訂單【${code}】已成功修正並同步雲端！`);
-        return;
-      }
-
-      const orderData = {
-        id: 'ORD-' + Date.now().toString().slice(-6),
-        channel, code, customer, phone, address, items, price,
-        status: '待出貨', carrier: '尚未指定', tracking_code: '', ship_date: '', shipping_fee: 0,
-        invoiced: false, invoice_no: '', payment_status: '未收款', paid_date: ''
-      };
-      await supabaseClient.from('orders').insert([orderData]);
-      DB_ORDERS.unshift(orderData);
-      closeCreateOrderModal();
-      renderOrdersTable();
-      alert('訂貨單已登錄並同步雲端！');
-    }{
-      const editId = document.getElementById('form-o-id').value;
-      const existingStatus = document.getElementById('form-o-status').value || '待出貨';
-      const channel = document.getElementById('form-o-channel').value;
-      const code = document.getElementById('form-o-code').value.trim();
-      const customer = document.getElementById('form-o-customer').value.trim();
-      const phone = document.getElementById('form-o-phone').value.trim();
-      const address = document.getElementById('form-o-address').value.trim();
-      const price = parseInt(document.getElementById('form-o-price').value);
-      if (!code || !customer || isNaN(price)) return alert('請填寫完整單號、客戶姓名與成交金額！');
-
-      const items = [];
-      document.querySelectorAll('.order-item-row').forEach(r => {
-        const pid = r.querySelector('.item-prod').value;
-        const qty = parseInt(r.querySelector('.item-qty').value) || 1;
-        const unitPrice = parseFloat(r.querySelector('.item-unit-price')?.value) || 0;
-        items.push({ productId: pid, qty, unitPrice });
       });
 
       if (editId) {
