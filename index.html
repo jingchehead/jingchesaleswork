@@ -2393,17 +2393,23 @@
       const file = event.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = function (e) {
+      reader.onload = async function (e) {
         const lines = e.target.result.replace(/^\uFEFF/, '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
         if (lines.length < 2) return alert('CSV 內容不足');
+
+        const rowsToSave = [];
         let count = 0;
+
         lines.slice(1).forEach((line, idx) => {
           const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
           const [name, skuRaw, model, barcode, pCost, sCost, price, category, supplier, wh, statusRaw] = cols;
           if (!name || !skuRaw) return;
+
           const sku = skuRaw.toUpperCase();
           const salesCost = Number(sCost) || Number(pCost) || 0;
           const existing = DB_PRODUCTS.find(p => p.sku.toUpperCase() === sku);
+          const id = existing ? existing.id : ('PRD-' + Date.now().toString().slice(-6) + idx);
+
           if (existing) {
             existing.name = name;
             existing.model = model || existing.model;
@@ -2418,8 +2424,11 @@
             existing.status = statusRaw === '停用' ? 'inactive' : 'active';
           } else {
             DB_PRODUCTS.unshift({
-              id: 'PRD-' + Date.now().toString().slice(-6) + idx,
-              sku, model: model || '', barcode: barcode || '', name,
+              id,
+              sku,
+              model: model || '',
+              barcode: barcode || '',
+              name,
               cost: salesCost,
               purchaseCost: Number(pCost) || 0,
               salesCost,
@@ -2427,16 +2436,39 @@
               category: category || '電腦周邊配件',
               supplier: supplier || (DB_SUPPLIERS[0]?.companyName || '未指定'),
               defaultWarehouse: wh === '寄售倉' ? '寄售倉' : '總倉',
-              mainStock: 0, consignStock: 0,
+              mainStock: 0,
+              consignStock: 0,
               status: statusRaw === '停用' ? 'inactive' : 'active'
             });
           }
+
+          rowsToSave.push({
+            id,
+            sku,
+            name,
+            cost: salesCost
+          });
           count++;
         });
+
         event.target.value = '';
+
+        if (rowsToSave.length > 0) {
+          const { error } = await supabaseClient
+            .from('products')
+            .upsert(rowsToSave, { onConflict: 'id' });
+
+          if (error) {
+            console.error('寫入 Supabase products 失敗：', error);
+            return alert('寫入 Supabase 失敗：' + error.message);
+          }
+
+          await loadDataFromCloud();
+        }
+
         updateInvBadges();
         switchInvSubtab('productList');
-        alert(`已匯入/更新 ${count} 筆產品主檔！`);
+        alert(`已匯入/更新 ${count} 筆產品主檔並同步至 Supabase！`);
       };
       reader.readAsText(file, 'UTF-8');
     }
