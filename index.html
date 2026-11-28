@@ -1170,6 +1170,30 @@
               </table>
             </div>
           </div>
+
+          <!-- 整筆入庫單修正視窗 -->
+          <div id="invStockInEditModal" class="hidden fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm p-3 sm:p-6 overflow-y-auto">
+            <div class="max-w-5xl mx-auto my-4 apple-card rounded-2xl border border-white/10 shadow-2xl">
+              <div class="p-5 border-b border-white/10 flex justify-between items-center gap-3">
+                <div><h3 class="text-base font-bold text-white">修正整筆入庫單</h3><p id="invSiEditDocLabel" class="text-xs text-slate-400 mt-1"></p></div>
+                <button type="button" onclick="closeInvStockInEditModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+              </div>
+              <form id="invStockInEditForm" onsubmit="saveInvStockInEdit(event)" class="p-5 space-y-5">
+                <input type="hidden" id="invSiEditDocNo">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div><label class="block text-slate-300 mb-1">入庫日期 *</label><input type="date" id="invSiEditDate" required class="w-full apple-input p-2.5"></div>
+                  <div><label class="block text-slate-300 mb-1">供應商名稱 *</label><input id="invSiEditSupplierName" list="invSiEditSupplierOptions" autocomplete="off" required class="w-full apple-input p-2.5" placeholder="輸入或選擇供應商"><datalist id="invSiEditSupplierOptions"></datalist><input type="hidden" id="invSiEditSupplierId"></div>
+                  <div><label class="block text-slate-300 mb-1">付款條件 *</label><select id="invSiEditPaymentTerm" class="w-full apple-input p-2.5"><option>月結30天</option><option>月結60天</option><option>寄倉銷售結算</option></select></div>
+                  <div><label class="block text-slate-300 mb-1">入庫倉別 *</label><select id="invSiEditWarehouse" class="w-full apple-input p-2.5"><option>總倉</option><option>寄售倉</option></select></div>
+                </div>
+                <div id="invSiEditSupplierInfo" class="rounded-xl bg-black/30 border border-white/10 p-3 text-xs text-slate-400">請選擇供應商名錄中的公司</div>
+                <div class="flex flex-wrap justify-between items-center gap-2"><div><h4 class="font-bold text-white">入庫品項</h4><p class="text-[11px] text-slate-400">可新增、刪除品項，並修改型號、SKU、品名、數量及進貨單價</p></div><button type="button" onclick="addInvStockInEditRow()" class="apple-btn-secondary px-3 py-2 rounded-lg text-sky-300">＋ 新增品項</button></div>
+                <div class="overflow-x-auto"><table class="w-full min-w-[760px] text-xs"><thead class="text-slate-400 border-b border-white/10"><tr><th class="p-2 text-left">型號</th><th class="p-2 text-left">SKU</th><th class="p-2 text-left">產品名稱</th><th class="p-2 text-right">數量</th><th class="p-2 text-right">單價</th><th class="p-2 text-right">小計</th><th></th></tr></thead><tbody id="invSiEditRowsBody"></tbody></table></div>
+                <div class="flex flex-wrap justify-between items-center gap-4 border-t border-white/10 pt-3"><div class="text-xs text-slate-300">總數量：<b id="invSiEditTotalQty" class="text-sky-300">0</b>　總金額：<b id="invSiEditTotalAmount" class="text-emerald-300">NT$ 0</b></div><div class="flex gap-2"><button type="button" onclick="closeInvStockInEditModal()" class="apple-btn-secondary px-4 py-2 rounded-xl">取消</button><button type="submit" class="apple-btn-primary px-5 py-2 rounded-xl text-white font-semibold">儲存整筆修正</button></div></div>
+                <p id="invSiEditApWarning" class="hidden text-amber-300 text-[11px]">注意：此入庫單已轉請款。修正入庫資料不會自動改寫既有請款單，請另行核對請款資料。</p>
+              </form>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -2957,34 +2981,178 @@
       }).join('');
     }
 
-    async function adjustInvStockInQty(docNo) {
+    function invEditEscape(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+
+    function openInvStockInEditModal(docNo) {
       const rec = DB_STOCK_IN.find(r => r.docNo === docNo);
-      if (!rec || !rec.items[0]) return;
-      const newQtyStr = prompt(`修正入庫單【${docNo}】首項「${rec.items[0].name}」入庫數量（目前：${rec.items[0].qty}）：`, rec.items[0].qty);
-      if (newQtyStr === null) return;
-      const newQty = parseInt(newQtyStr, 10);
-      if (isNaN(newQty) || newQty <= 0) return alert('請輸入大於 0 的有效整數數量！');
+      if (!rec) return;
+      document.getElementById('invSiEditDocNo').value = rec.docNo;
+      document.getElementById('invSiEditDocLabel').innerText = `${rec.docNo}｜目前 ${rec.date}｜${rec.supplier}`;
+      document.getElementById('invSiEditDate').value = rec.date || '';
+      document.getElementById('invSiEditSupplierName').value = rec.supplier || '';
+      document.getElementById('invSiEditSupplierId').value = rec.supplierId || '';
+      document.getElementById('invSiEditPaymentTerm').value = rec.paymentTerm || '月結30天';
+      document.getElementById('invSiEditWarehouse').value = rec.warehouse || '總倉';
+      document.getElementById('invSiEditSupplierOptions').innerHTML = DB_SUPPLIERS.map(v => `<option value="${invEditEscape(v.companyName)}"></option>`).join('');
+      document.getElementById('invSiEditSupplierName').oninput = updateInvStockInEditSupplierInfo;
+      document.getElementById('invSiEditRowsBody').innerHTML = '';
+      (rec.items || []).forEach(it => addInvStockInEditRow(it));
+      if (!rec.items?.length) addInvStockInEditRow();
+      document.getElementById('invSiEditApWarning').classList.toggle('hidden', rec.apStatus !== 'billed');
+      updateInvStockInEditSupplierInfo();
+      document.getElementById('invStockInEditModal').classList.remove('hidden');
+      recalcInvStockInEditSummary();
+    }
 
-      applyInvStockInDelta(rec, -1);
-      rec.items[0].qty = newQty;
-      rec.totalQty = rec.items.reduce((s, x) => s + Number(x.qty || 0), 0);
-      rec.totalAmount = rec.items.reduce((s, x) => s + ((Number(x.qty) || 0) * (Number(x.price) || 0)), 0);
-      applyInvStockInDelta(rec, +1);
-      await persistInvProductStocksToCloud();
+    function closeInvStockInEditModal() {
+      document.getElementById('invStockInEditModal').classList.add('hidden');
+    }
 
-      const { error } = await supabaseClient.from('stock_ins').update({
-        items: rec.items,
-        total_qty: rec.totalQty,
-        total_amount: rec.totalAmount
-      }).eq('doc_no', docNo);
-      if (error) {
-        console.error('更新入庫單雲端資料失敗：', error);
-        alert('本機數量已調整，但雲端更新失敗：' + error.message);
+    function updateInvStockInEditSupplierInfo() {
+      const name = document.getElementById('invSiEditSupplierName').value.trim();
+      const sup = DB_SUPPLIERS.find(v => v.companyName.trim() === name);
+      document.getElementById('invSiEditSupplierId').value = sup?.id || '';
+      document.getElementById('invSiEditSupplierInfo').innerText = sup
+        ? `統編：${sup.taxId || '—'}｜聯絡人：${sup.contactName || '—'}｜電話：${sup.phone || '—'}｜地址：${sup.address || '—'}`
+        : '尚未與供應商名錄配對，請輸入並選擇名錄中的正式供應商名稱。';
+    }
+
+    function addInvStockInEditRow(prefill = {}) {
+      const tbody = document.getElementById('invSiEditRowsBody');
+      const tr = document.createElement('tr');
+      tr.className = 'inv-si-edit-row border-b border-white/[0.06]';
+      tr.innerHTML = `
+        <td class="p-1.5"><input class="w-32 apple-input p-2 inv-edit-model" value="${invEditEscape(prefill.model || '')}" placeholder="型號"></td>
+        <td class="p-1.5"><input class="w-32 apple-input p-2 inv-edit-sku" value="${invEditEscape(prefill.sku || '')}" placeholder="SKU"></td>
+        <td class="p-1.5"><input class="w-full apple-input p-2 inv-edit-name" value="${invEditEscape(prefill.name || '')}" placeholder="產品名稱"></td>
+        <td class="p-1.5"><input type="number" min="1" step="1" class="w-20 apple-input p-2 text-right inv-edit-qty" value="${prefill.qty ?? 1}"></td>
+        <td class="p-1.5"><input type="number" min="0" step="0.01" class="w-24 apple-input p-2 text-right inv-edit-price" value="${prefill.price ?? ''}" placeholder="單價"></td>
+        <td class="p-2 text-right text-emerald-300 inv-edit-sub">—</td>
+        <td class="p-1.5 text-center"><button type="button" class="text-rose-400 inv-edit-remove">✕</button></td>`;
+      const recalc = recalcInvStockInEditSummary;
+      ['.inv-edit-qty','.inv-edit-price'].forEach(sel => tr.querySelector(sel).addEventListener('input', recalc));
+      const tryMatch = () => {
+        const model = tr.querySelector('.inv-edit-model').value.trim().toLowerCase();
+        const sku = tr.querySelector('.inv-edit-sku').value.trim().toLowerCase();
+        const p = DB_PRODUCTS.find(x => (model && x.model?.toLowerCase() === model) || (sku && x.sku?.toLowerCase() === sku));
+        if (p) {
+          if (!tr.querySelector('.inv-edit-name').value.trim()) tr.querySelector('.inv-edit-name').value = p.name || '';
+          if (!tr.querySelector('.inv-edit-model').value.trim()) tr.querySelector('.inv-edit-model').value = p.model || '';
+          if (!tr.querySelector('.inv-edit-sku').value.trim()) tr.querySelector('.inv-edit-sku').value = p.sku || '';
+          if (!tr.querySelector('.inv-edit-price').value.trim()) tr.querySelector('.inv-edit-price').value = p.purchaseCost ?? p.cost ?? '';
+        }
+        recalc();
+      };
+      tr.querySelector('.inv-edit-model').addEventListener('input', tryMatch);
+      tr.querySelector('.inv-edit-sku').addEventListener('input', tryMatch);
+      tr.querySelector('.inv-edit-remove').addEventListener('click', () => { tr.remove(); recalc(); });
+      tbody.appendChild(tr);
+      recalc();
+    }
+
+    function recalcInvStockInEditSummary() {
+      let qty = 0, amount = 0;
+      document.querySelectorAll('#invSiEditRowsBody .inv-si-edit-row').forEach(tr => {
+        const q = Number(tr.querySelector('.inv-edit-qty').value) || 0;
+        const p = tr.querySelector('.inv-edit-price').value.trim() === '' ? null : Number(tr.querySelector('.inv-edit-price').value);
+        qty += q;
+        if (p !== null && Number.isFinite(p)) amount += q * p;
+        tr.querySelector('.inv-edit-sub').innerText = p === null ? '—' : `NT$ ${(q*p).toLocaleString()}`;
+      });
+      document.getElementById('invSiEditTotalQty').innerText = qty.toLocaleString();
+      document.getElementById('invSiEditTotalAmount').innerText = `NT$ ${amount.toLocaleString()}`;
+    }
+
+    async function saveInvStockInEdit(e) {
+      e.preventDefault();
+      const docNo = document.getElementById('invSiEditDocNo').value;
+      const oldRec = DB_STOCK_IN.find(r => r.docNo === docNo);
+      if (!oldRec) return alert('找不到原入庫單，請重新整理後再試。');
+      const supplierName = document.getElementById('invSiEditSupplierName').value.trim();
+      const supplier = DB_SUPPLIERS.find(v => v.companyName.trim() === supplierName);
+      if (!supplier) return alert('供應商必須從供應商名錄選擇，不能只輸入未建檔名稱。');
+      const date = document.getElementById('invSiEditDate').value;
+      const paymentTerm = document.getElementById('invSiEditPaymentTerm').value;
+      const warehouse = document.getElementById('invSiEditWarehouse').value;
+      if (!date) return alert('請選擇入庫日期。');
+
+      const items = [];
+      for (const tr of document.querySelectorAll('#invSiEditRowsBody .inv-si-edit-row')) {
+        const model = tr.querySelector('.inv-edit-model').value.trim();
+        const sku = tr.querySelector('.inv-edit-sku').value.trim().toUpperCase();
+        const name = tr.querySelector('.inv-edit-name').value.trim();
+        const qty = Number(tr.querySelector('.inv-edit-qty').value);
+        const priceText = tr.querySelector('.inv-edit-price').value.trim();
+        const price = priceText === '' ? null : Number(priceText);
+        if (!model && !sku && !name) continue;
+        if (!name || !Number.isInteger(qty) || qty <= 0 || (price !== null && (!Number.isFinite(price) || price < 0))) {
+          return alert('請檢查每筆品項：產品名稱必填、數量須為正整數、單價不可小於 0。');
+        }
+        items.push({ model, sku, name, qty, price });
+      }
+      if (!items.length) return alert('至少需要一筆有效入庫品項。');
+
+      const totalQty = items.reduce((sum, it) => sum + it.qty, 0);
+      const totalAmount = items.reduce((sum, it) => sum + (it.price === null ? 0 : it.qty * it.price), 0);
+      const updated = { ...oldRec, date, supplier: supplier.companyName, supplierId: supplier.id, paymentTerm, warehouse, items, totalQty, totalAmount };
+      const cloudPayload = {
+        stock_in_date: date, vendor_id: supplier.id, vendor_name: supplier.companyName,
+        payment_term: paymentTerm, warehouse, items, total_qty: totalQty, total_amount: totalAmount
+      };
+
+      // 先計算新舊入庫單的庫存差額；若後續出庫已使用該批庫存，不允許把庫存沖成負數。
+      const stockChanges = new Map();
+      const collectStockChange = (record, sign) => {
+        (record.items || []).forEach(line => {
+          const product = DB_PRODUCTS.find(p =>
+            (line.sku && p.sku && p.sku.toUpperCase() === line.sku.toUpperCase()) ||
+            (line.model && p.model && p.model.toLowerCase() === line.model.toLowerCase()) ||
+            p.name === line.name
+          );
+          if (!product) return;
+          const field = record.warehouse === '總倉' ? 'mainStock' : 'consignStock';
+          const key = `${product.id}::${field}`;
+          const entry = stockChanges.get(key) || { product, field, delta: 0 };
+          entry.delta += (Number(line.qty) || 0) * sign;
+          stockChanges.set(key, entry);
+        });
+      };
+      collectStockChange(oldRec, -1);
+      collectStockChange(updated, +1);
+      for (const change of stockChanges.values()) {
+        const nextQty = (Number(change.product[change.field]) || 0) + change.delta;
+        if (nextQty < 0) {
+          return alert(`無法修正：商品「${change.product.name}」的現有庫存不足以沖回原入庫數量。請先確認後續出庫/銷貨紀錄，再進行庫存調整。`);
+        }
       }
 
+      const { error } = await supabaseClient.from('stock_ins').update(cloudPayload).eq('doc_no', docNo);
+      if (error) {
+        console.error('整筆入庫單更新失敗：', error);
+        return alert('雲端更新失敗，庫存尚未調整：' + error.message);
+      }
+
+      stockChanges.forEach(change => {
+        change.product[change.field] = (Number(change.product[change.field]) || 0) + change.delta;
+      });
+      Object.assign(oldRec, updated);
+      await persistInvProductStocksToCloud();
+      if (oldRec.apVoucherNo) {
+        const voucher = DB_AP_VOUCHERS.find(v => v.voucherNo === oldRec.apVoucherNo);
+        if (voucher) voucher.supplier = updated.supplier;
+      }
+      closeInvStockInEditModal();
       renderInvProductTable();
       renderInvStockInHistory();
-      alert(`已修正「${docNo}」數量並自動同步調整${rec.warehouse}庫存！`);
+      updateInvBadges();
+      alert(`入庫單「${docNo}」已完成整筆修正，${warehouse}庫存已依新明細重新計算。`);
+    }
+
+    async function adjustInvStockInQty(docNo) {
+      // 舊版按鈕名稱保留相容；現在改為開啟整筆入庫單編輯視窗。
+      openInvStockInEditModal(docNo);
     }
 
     async function deleteInvStockIn(docNo) {
