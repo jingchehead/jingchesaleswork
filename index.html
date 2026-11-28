@@ -1190,8 +1190,24 @@
                 <div class="flex flex-wrap justify-between items-center gap-2"><div><h4 class="font-bold text-white">入庫品項</h4><p class="text-[11px] text-slate-400">可新增、刪除品項，並修改型號、SKU、品名、數量及進貨單價</p></div><button type="button" onclick="addInvStockInEditRow()" class="apple-btn-secondary px-3 py-2 rounded-lg text-sky-300">＋ 新增品項</button></div>
                 <div class="overflow-x-auto"><table class="w-full min-w-[760px] text-xs"><thead class="text-slate-400 border-b border-white/10"><tr><th class="p-2 text-left">型號</th><th class="p-2 text-left">SKU</th><th class="p-2 text-left">產品名稱</th><th class="p-2 text-right">數量</th><th class="p-2 text-right">單價</th><th class="p-2 text-right">小計</th><th></th></tr></thead><tbody id="invSiEditRowsBody"></tbody></table></div>
                 <div class="flex flex-wrap justify-between items-center gap-4 border-t border-white/10 pt-3"><div class="text-xs text-slate-300">總數量：<b id="invSiEditTotalQty" class="text-sky-300">0</b>　總金額：<b id="invSiEditTotalAmount" class="text-emerald-300">NT$ 0</b></div><div class="flex gap-2"><button type="button" onclick="closeInvStockInEditModal()" class="apple-btn-secondary px-4 py-2 rounded-xl">取消</button><button type="submit" class="apple-btn-primary px-5 py-2 rounded-xl text-white font-semibold">儲存整筆修正</button></div></div>
-                <p id="invSiEditApWarning" class="hidden text-amber-300 text-[11px]">注意：此入庫單已轉請款。修正入庫資料不會自動改寫既有請款單，請另行核對請款資料。</p>
+                <div class="space-y-1"><label class="block text-slate-300 text-xs">本次修正原因（必填）</label><textarea id="invSiEditReason" required rows="2" class="w-full apple-input p-2.5" placeholder="例如：供應商報價單單價輸入錯誤、原入庫數量登打錯誤"></textarea><p class="text-[11px] text-slate-500">系統會保留修正前後資料，並另寫入庫存異動紀錄。</p></div>
+                <p id="invSiEditApWarning" class="hidden text-amber-300 text-[11px]">注意：此入庫單已轉請款。修正入庫資料不會自動改寫既有請款憑證，請同步核對請款資料。</p>
               </form>
+            </div>
+          </div>
+
+          <!-- 入庫單庫存異動稽核視窗 -->
+          <div id="invStockInMovementModal" class="hidden fixed inset-0 z-[110] bg-black/75 backdrop-blur-sm p-3 sm:p-6 overflow-y-auto">
+            <div class="max-w-5xl mx-auto my-4 apple-card rounded-2xl border border-white/10 shadow-2xl">
+              <div class="p-5 border-b border-white/10 flex justify-between items-center gap-3">
+                <div><h3 class="text-base font-bold text-white">入庫單異動紀錄</h3><p id="invSiMovementDocLabel" class="text-xs text-slate-400 mt-1"></p></div>
+                <button type="button" onclick="closeInvStockInMovementModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+              </div>
+              <div class="p-5 space-y-5">
+                <section><h4 class="font-bold text-white text-sm mb-2">庫存數量異動</h4><div class="overflow-x-auto"><table class="w-full min-w-[700px] text-xs"><thead class="text-slate-400 border-b border-white/10"><tr><th class="p-2 text-left">時間</th><th class="p-2 text-left">商品</th><th class="p-2">倉別</th><th class="p-2 text-right">異動</th><th class="p-2 text-right">異動前</th><th class="p-2 text-right">異動後</th><th class="p-2 text-left">原因</th></tr></thead><tbody id="invSiMovementRows"></tbody></table></div></section>
+                <section><h4 class="font-bold text-white text-sm mb-2">單據修正／刪除歷程</h4><div id="invSiAdjustmentAudit" class="space-y-2 text-xs text-slate-300"></div></section>
+                <div class="flex justify-end"><button type="button" onclick="closeInvStockInMovementModal()" class="apple-btn-secondary px-4 py-2 rounded-xl">關閉</button></div>
+              </div>
             </div>
           </div>
         </div>
@@ -2704,6 +2720,7 @@
       const idx = tbody.children.length + 1;
       const tr = document.createElement('tr');
       tr.className = 'inv-si-row';
+      tr.dataset.productId = prefill.product_id || prefill.productId || '';
       tr.innerHTML = `
         <td class="p-2 text-center font-mono text-slate-400">${idx}</td>
         <td class="p-2"><input type="text" class="w-full apple-input p-1.5 font-mono inv-si-model" placeholder="型號" value="${prefill.model || ''}" /></td>
@@ -2734,6 +2751,7 @@
       }
 
       function autoMatch() {
+        tr.dataset.productId = '';
         const mVal = modelEl.value.trim().toLowerCase();
         const sVal = skuEl.value.trim().toLowerCase();
         const found = DB_PRODUCTS.find(p =>
@@ -2741,6 +2759,7 @@
           (sVal && p.sku.toLowerCase() === sVal)
         );
         if (found) {
+          tr.dataset.productId = found.id || '';
           if (!nameEl.value.trim()) nameEl.value = found.name;
           if (!skuEl.value.trim()) skuEl.value = found.sku;
           if (!modelEl.value.trim() && found.model) modelEl.value = found.model;
@@ -2816,49 +2835,53 @@
       reader.readAsText(file, 'UTF-8');
     }
 
-    function applyInvStockInDelta(record, sign = 1) {
-      record.items.forEach(line => {
-        const prd = DB_PRODUCTS.find(p =>
-          (line.sku && p.sku.toUpperCase() === line.sku.toUpperCase()) ||
-          (line.model && p.model && p.model.toLowerCase() === line.model.toLowerCase()) ||
-          p.name === line.name
-        );
-        if (!prd) return;
-        const delta = (Number(line.qty) || 0) * sign;
-        if (record.warehouse === '總倉') {
-          prd.mainStock = Math.max(0, (Number(prd.mainStock) || 0) + delta);
-        } else {
-          prd.consignStock = Math.max(0, (Number(prd.consignStock) || 0) + delta);
-        }
-      });
+    function findInvProductForStockLine(line) {
+      const pid = line.product_id || line.productId;
+      const byId = DB_PRODUCTS.find(p => pid && String(p.id) === String(pid));
+      if (byId) return byId;
+      // 若輸入了 SKU/型號，就必須以識別碼配對；不可在配對失敗時退回舊品名誤認商品。
+      if (line.sku) return DB_PRODUCTS.find(p => p.sku && p.sku.toUpperCase() === String(line.sku).toUpperCase()) || null;
+      if (line.model) return DB_PRODUCTS.find(p => p.model && p.model.toLowerCase() === String(line.model).toLowerCase()) || null;
+      return line.name ? DB_PRODUCTS.find(p => p.name === line.name) || null : null;
     }
 
-    async function persistInvProductStocksToCloud() {
-      const results = await Promise.all(DB_PRODUCTS.map(p =>
-        supabaseClient.from('products').update({
-          main_stock: Number(p.mainStock) || 0,
-          consign_stock: Number(p.consignStock) || 0
-        }).eq('id', p.id)
-      ));
-      const failed = results.find(r => r.error);
-      if (failed?.error) {
-        console.error('產品庫存同步 Supabase 失敗：', failed.error);
-        alert('入庫單已儲存，但部分產品庫存未能同步至雲端：' + failed.error.message);
+    function getInvStockInPayload(record) {
+      return {
+        doc_no: record.docNo,
+        stock_in_date: record.date,
+        vendor_id: record.supplierId,
+        vendor_name: record.supplier,
+        payment_term: record.paymentTerm,
+        warehouse: record.warehouse,
+        items: record.items,
+        total_qty: record.totalQty,
+        total_amount: record.totalAmount,
+        ap_status: record.apStatus || 'pending',
+        ap_voucher_no: record.apVoucherNo || null
+      };
+    }
+
+    async function callInvStockInRpc(name, args, actionLabel) {
+      const { data, error } = await supabaseClient.rpc(name, args);
+      if (error) {
+        console.error(`${actionLabel}失敗：`, error);
+        throw new Error(error.message || `${actionLabel}失敗`);
       }
+      if (data && data.ok === false) throw new Error(data.message || `${actionLabel}失敗`);
+      return data;
     }
 
     async function submitInvStockIn(e) {
       e.preventDefault();
+      const form = document.getElementById('invStockInForm');
+      const submitBtn = form?.querySelector('button[type="submit"]');
+      if (submitBtn?.disabled) return;
       const date = document.getElementById('invSiDate').value;
       const selectedSupplier = getSelectedInvSupplier();
-      if (!selectedSupplier) {
-        return alert('請輸入並從供應商名錄選擇有效的供應商名稱；尚未建檔者請先至「供應商檔案建立」新增。');
-      }
-      const supplier = selectedSupplier.companyName;
-      const supplierId = selectedSupplier.id;
+      if (!date) return alert('請選擇入庫日期。');
+      if (!selectedSupplier) return alert('請輸入並從供應商名錄選擇有效的供應商名稱；尚未建檔者請先建立供應商資料。');
       const paymentTerm = document.getElementById('invSiPaymentTerm').value;
       const warehouse = document.getElementById('invSiWarehouse').value;
-
       const items = [];
       let totalQty = 0, totalAmount = 0;
 
@@ -2866,57 +2889,41 @@
         const model = tr.querySelector('.inv-si-model').value.trim();
         const sku = tr.querySelector('.inv-si-sku').value.trim().toUpperCase();
         const name = tr.querySelector('.inv-si-name').value.trim();
-        const qty = parseInt(tr.querySelector('.inv-si-qty').value, 10);
-        const priceStr = tr.querySelector('.inv-si-price').value.trim();
-        const price = priceStr !== '' ? parseFloat(priceStr) : null;
-
+        const qty = Number(tr.querySelector('.inv-si-qty').value);
+        const priceText = tr.querySelector('.inv-si-price').value.trim();
+        const price = priceText === '' ? null : Number(priceText);
         if (!model && !sku && !name) continue;
-        if (!name || isNaN(qty) || qty <= 0) return alert('請確認每筆入庫項目皆有產品名稱與大於 0 的數量！');
-
-        items.push({ model, sku, name, qty, price });
+        const product = findInvProductForStockLine({product_id:tr.dataset.productId,sku,model,name});
+        if (!name || !Number.isInteger(qty) || qty <= 0 || (price !== null && (!Number.isFinite(price) || price < 0))) {
+          return alert('請檢查每筆入庫項目：產品名稱必填、數量須為正整數、單價不可小於 0。');
+        }
+        if (!product) return alert(`商品「${name}」無法對應產品主檔，請先建立產品或重新選擇正確 SKU／型號。`);
+        items.push({ product_id:String(product.id), model, sku, name, qty, price });
         totalQty += qty;
-        if (price !== null && !isNaN(price)) totalAmount += qty * price;
+        if (price !== null) totalAmount += qty * price;
       }
+      if (!items.length) return alert('請至少填寫一筆已對應產品主檔的入庫品項！');
 
-      if (items.length === 0) return alert('請至少填寫一筆入庫產品項目！');
-
-      const docNo = `IN-${date.replace(/-/g, '')}-${String(DB_STOCK_IN.length + 1).padStart(3, '0')}`;
-      const record = {
-        docNo, date, supplier, supplierId, paymentTerm, warehouse, items, totalQty, totalAmount,
-        apStatus: 'pending', apVoucherNo: null
-      };
-
-      const cloudPayload = {
-        doc_no: docNo,
-        stock_in_date: date,
-        vendor_id: supplierId,
-        vendor_name: supplier,
-        payment_term: paymentTerm,
-        warehouse,
-        items,
-        total_qty: totalQty,
-        total_amount: totalAmount,
-        ap_status: 'pending',
-        ap_voucher_no: null
-      };
-
-      const { error: saveError } = await supabaseClient.from('stock_ins').insert([cloudPayload]);
-      if (saveError) {
-        console.error('入庫單寫入 Supabase 失敗：', saveError);
-        return alert('入庫單尚未過帳，雲端寫入失敗：' + saveError.message +
-          '\\n請確認已建立 stock_ins 資料表及 RLS 權限。');
+      const docNo = `IN-${date.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
+      const record = { docNo, date, supplier:selectedSupplier.companyName, supplierId:String(selectedSupplier.id), paymentTerm, warehouse, items, totalQty, totalAmount, apStatus:'pending', apVoucherNo:null };
+      const payload = getInvStockInPayload(record);
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.dataset.originalText = submitBtn.innerText; submitBtn.innerText = '正在寫入雲端…'; }
+      try {
+        await callInvStockInRpc('save_stock_in_document', {
+          p_doc_no: docNo, p_payload: payload, p_reason: '新增入庫過帳'
+        }, '新增入庫單');
+        await loadDataFromCloud();
+        document.getElementById('invStockInRowsBody').innerHTML = '';
+        addInvStockInRow();
+        updateInvBadges();
+        renderInvProductTable();
+        renderInvStockInHistory();
+        alert(`入庫單「${docNo}」已過帳！庫存與異動紀錄已在同一筆資料庫交易中完成。`);
+      } catch (err) {
+        alert('入庫單未過帳：' + err.message + '\n雲端交易已取消，請修正問題後重試。');
+      } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = submitBtn.dataset.originalText || '確認入庫並更新庫存'; }
       }
-
-      applyInvStockInDelta(record, +1);
-      await persistInvProductStocksToCloud();
-      DB_STOCK_IN.unshift(record);
-
-      document.getElementById('invStockInRowsBody').innerHTML = '';
-      addInvStockInRow();
-      updateInvBadges();
-      renderInvProductTable();
-      renderInvStockInHistory();
-      alert(`入庫單「${docNo}」已過帳！${warehouse}庫存 +${totalQty}`);
     }
 
     function clearInvSiDateFilter() {
@@ -2972,6 +2979,7 @@
             <td class="p-3.5 text-right">
               <div class="inline-flex items-center gap-1.5 flex-wrap justify-end">
                 <button type="button" onclick="adjustInvStockInQty('${rec.docNo}')" class="apple-btn-secondary px-2.5 py-1 rounded-lg text-sky-300">修正</button>
+                <button type="button" onclick="openInvStockInMovementModal('${rec.docNo}')" class="apple-btn-secondary px-2.5 py-1 rounded-lg text-emerald-300">異動紀錄</button>
                 <button type="button" onclick="openInvApModal('${rec.docNo}')" class="apple-btn-secondary px-2.5 py-1 rounded-lg text-purple-300 font-semibold">${isBilled ? '檢視請款單' : '轉進貨單請款'}</button>
                 <button type="button" onclick="deleteInvStockIn('${rec.docNo}')" class="apple-btn-secondary px-2.5 py-1 rounded-lg text-rose-400">刪除</button>
               </div>
@@ -2989,6 +2997,7 @@
       const rec = DB_STOCK_IN.find(r => r.docNo === docNo);
       if (!rec) return;
       document.getElementById('invSiEditDocNo').value = rec.docNo;
+      document.getElementById('invSiEditReason').value = '';
       document.getElementById('invSiEditDocLabel').innerText = `${rec.docNo}｜目前 ${rec.date}｜${rec.supplier}`;
       document.getElementById('invSiEditDate').value = rec.date || '';
       document.getElementById('invSiEditSupplierName').value = rec.supplier || '';
@@ -3023,6 +3032,7 @@
       const tbody = document.getElementById('invSiEditRowsBody');
       const tr = document.createElement('tr');
       tr.className = 'inv-si-edit-row border-b border-white/[0.06]';
+      tr.dataset.productId = prefill.product_id || prefill.productId || '';
       tr.innerHTML = `
         <td class="p-1.5"><input class="w-32 apple-input p-2 inv-edit-model" value="${invEditEscape(prefill.model || '')}" placeholder="型號"></td>
         <td class="p-1.5"><input class="w-32 apple-input p-2 inv-edit-sku" value="${invEditEscape(prefill.sku || '')}" placeholder="SKU"></td>
@@ -3034,10 +3044,12 @@
       const recalc = recalcInvStockInEditSummary;
       ['.inv-edit-qty','.inv-edit-price'].forEach(sel => tr.querySelector(sel).addEventListener('input', recalc));
       const tryMatch = () => {
+        tr.dataset.productId = '';
         const model = tr.querySelector('.inv-edit-model').value.trim().toLowerCase();
         const sku = tr.querySelector('.inv-edit-sku').value.trim().toLowerCase();
         const p = DB_PRODUCTS.find(x => (model && x.model?.toLowerCase() === model) || (sku && x.sku?.toLowerCase() === sku));
         if (p) {
+          tr.dataset.productId = p.id || '';
           if (!tr.querySelector('.inv-edit-name').value.trim()) tr.querySelector('.inv-edit-name').value = p.name || '';
           if (!tr.querySelector('.inv-edit-model').value.trim()) tr.querySelector('.inv-edit-model').value = p.model || '';
           if (!tr.querySelector('.inv-edit-sku').value.trim()) tr.querySelector('.inv-edit-sku').value = p.sku || '';
@@ -3070,6 +3082,9 @@
       const docNo = document.getElementById('invSiEditDocNo').value;
       const oldRec = DB_STOCK_IN.find(r => r.docNo === docNo);
       if (!oldRec) return alert('找不到原入庫單，請重新整理後再試。');
+      if (oldRec.apStatus === 'billed' && !confirm('這張入庫單已轉成請款憑證。此次修正會更新入庫單與庫存異動，但不會自動改寫既有請款憑證。請確認你會另外核對／修正請款資料。是否繼續？')) return;
+      const reason = document.getElementById('invSiEditReason').value.trim();
+      if (!reason) return alert('請填寫本次修正原因，系統才會建立完整異動紀錄。');
       const supplierName = document.getElementById('invSiEditSupplierName').value.trim();
       const supplier = DB_SUPPLIERS.find(v => v.companyName.trim() === supplierName);
       if (!supplier) return alert('供應商必須從供應商名錄選擇，不能只輸入未建檔名稱。');
@@ -3077,7 +3092,6 @@
       const paymentTerm = document.getElementById('invSiEditPaymentTerm').value;
       const warehouse = document.getElementById('invSiEditWarehouse').value;
       if (!date) return alert('請選擇入庫日期。');
-
       const items = [];
       for (const tr of document.querySelectorAll('#invSiEditRowsBody .inv-si-edit-row')) {
         const model = tr.querySelector('.inv-edit-model').value.trim();
@@ -3087,67 +3101,81 @@
         const priceText = tr.querySelector('.inv-edit-price').value.trim();
         const price = priceText === '' ? null : Number(priceText);
         if (!model && !sku && !name) continue;
+        const product = findInvProductForStockLine({product_id:tr.dataset.productId,sku,model,name});
         if (!name || !Number.isInteger(qty) || qty <= 0 || (price !== null && (!Number.isFinite(price) || price < 0))) {
           return alert('請檢查每筆品項：產品名稱必填、數量須為正整數、單價不可小於 0。');
         }
-        items.push({ model, sku, name, qty, price });
+        if (!product) return alert(`商品「${name}」無法對應產品主檔，請先建立產品或修正 SKU／型號。`);
+        items.push({ product_id:String(product.id), model, sku, name, qty, price });
       }
-      if (!items.length) return alert('至少需要一筆有效入庫品項。');
-
+      if (!items.length) return alert('至少需要一筆有效且已對應產品主檔的入庫品項。');
       const totalQty = items.reduce((sum, it) => sum + it.qty, 0);
       const totalAmount = items.reduce((sum, it) => sum + (it.price === null ? 0 : it.qty * it.price), 0);
-      const updated = { ...oldRec, date, supplier: supplier.companyName, supplierId: supplier.id, paymentTerm, warehouse, items, totalQty, totalAmount };
-      const cloudPayload = {
-        stock_in_date: date, vendor_id: supplier.id, vendor_name: supplier.companyName,
-        payment_term: paymentTerm, warehouse, items, total_qty: totalQty, total_amount: totalAmount
-      };
-
-      // 先計算新舊入庫單的庫存差額；若後續出庫已使用該批庫存，不允許把庫存沖成負數。
-      const stockChanges = new Map();
-      const collectStockChange = (record, sign) => {
-        (record.items || []).forEach(line => {
-          const product = DB_PRODUCTS.find(p =>
-            (line.sku && p.sku && p.sku.toUpperCase() === line.sku.toUpperCase()) ||
-            (line.model && p.model && p.model.toLowerCase() === line.model.toLowerCase()) ||
-            p.name === line.name
-          );
-          if (!product) return;
-          const field = record.warehouse === '總倉' ? 'mainStock' : 'consignStock';
-          const key = `${product.id}::${field}`;
-          const entry = stockChanges.get(key) || { product, field, delta: 0 };
-          entry.delta += (Number(line.qty) || 0) * sign;
-          stockChanges.set(key, entry);
-        });
-      };
-      collectStockChange(oldRec, -1);
-      collectStockChange(updated, +1);
-      for (const change of stockChanges.values()) {
-        const nextQty = (Number(change.product[change.field]) || 0) + change.delta;
-        if (nextQty < 0) {
-          return alert(`無法修正：商品「${change.product.name}」的現有庫存不足以沖回原入庫數量。請先確認後續出庫/銷貨紀錄，再進行庫存調整。`);
+      const updated = { ...oldRec, date, supplier:supplier.companyName, supplierId:String(supplier.id), paymentTerm, warehouse, items, totalQty, totalAmount };
+      const payload = getInvStockInPayload(updated);
+      const saveBtn = document.querySelector('#invStockInEditForm button[type="submit"]');
+      if (saveBtn?.disabled) return;
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.dataset.originalText = saveBtn.innerText; saveBtn.innerText = '正在儲存…'; }
+      try {
+        await callInvStockInRpc('save_stock_in_document', {
+          p_doc_no: docNo, p_payload: payload, p_reason: reason
+        }, '整筆入庫單修正');
+        await loadDataFromCloud();
+        if (oldRec.apVoucherNo) {
+          const voucher = DB_AP_VOUCHERS.find(v => v.voucherNo === oldRec.apVoucherNo);
+          if (voucher) voucher.supplier = updated.supplier;
         }
+        closeInvStockInEditModal();
+        renderInvProductTable();
+        renderInvStockInHistory();
+        updateInvBadges();
+        alert(`入庫單「${docNo}」已修正。系統已保存修正前後資料，並以庫存調整紀錄記錄各商品實際差額。`);
+      } catch (err) {
+        alert('修正失敗：' + err.message + '\n資料庫交易已回復，原入庫單與庫存未變更。');
+      } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.innerText = saveBtn.dataset.originalText || '儲存整筆修正'; }
       }
+    }
 
-      const { error } = await supabaseClient.from('stock_ins').update(cloudPayload).eq('doc_no', docNo);
-      if (error) {
-        console.error('整筆入庫單更新失敗：', error);
-        return alert('雲端更新失敗，庫存尚未調整：' + error.message);
-      }
+    function closeInvStockInMovementModal() {
+      document.getElementById('invStockInMovementModal').classList.add('hidden');
+    }
 
-      stockChanges.forEach(change => {
-        change.product[change.field] = (Number(change.product[change.field]) || 0) + change.delta;
-      });
-      Object.assign(oldRec, updated);
-      await persistInvProductStocksToCloud();
-      if (oldRec.apVoucherNo) {
-        const voucher = DB_AP_VOUCHERS.find(v => v.voucherNo === oldRec.apVoucherNo);
-        if (voucher) voucher.supplier = updated.supplier;
+    async function openInvStockInMovementModal(docNo) {
+      const rec = DB_STOCK_IN.find(r => r.docNo === docNo);
+      document.getElementById('invSiMovementDocLabel').innerText = `入庫單：${docNo}${rec ? `｜${rec.supplier}｜${rec.date}` : ''}`;
+      document.getElementById('invSiMovementRows').innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400">讀取中…</td></tr>';
+      document.getElementById('invSiAdjustmentAudit').innerHTML = '<div class="text-slate-400">讀取中…</div>';
+      document.getElementById('invStockInMovementModal').classList.remove('hidden');
+      try {
+        const [movementRes, auditRes] = await Promise.all([
+          supabaseClient.from('inventory_movements').select('*').eq('doc_no', docNo).order('created_at', {ascending:false}),
+          supabaseClient.from('stock_in_adjustments').select('*').eq('doc_no', docNo).order('created_at', {ascending:false})
+        ]);
+        if (movementRes.error) throw movementRes.error;
+        if (auditRes.error) throw auditRes.error;
+        const movements = movementRes.data || [];
+        const audits = auditRes.data || [];
+        document.getElementById('invSiMovementRows').innerHTML = movements.length ? movements.map(m => `
+          <tr class="border-b border-white/[0.06]">
+            <td class="p-2 whitespace-nowrap">${invEditEscape(new Date(m.created_at).toLocaleString('zh-TW'))}</td>
+            <td class="p-2">${invEditEscape(m.product_name || m.product_id)}</td>
+            <td class="p-2 text-center">${invEditEscape(m.warehouse)}</td>
+            <td class="p-2 text-right font-mono ${Number(m.qty_delta) < 0 ? 'text-rose-300' : 'text-emerald-300'}">${Number(m.qty_delta) > 0 ? '+' : ''}${Number(m.qty_delta).toLocaleString()}</td>
+            <td class="p-2 text-right font-mono">${Number(m.before_qty).toLocaleString()}</td>
+            <td class="p-2 text-right font-mono">${Number(m.after_qty).toLocaleString()}</td>
+            <td class="p-2">${invEditEscape(m.reason || '')}</td>
+          </tr>`).join('') : '<tr><td colspan="7" class="p-4 text-center text-slate-400">目前沒有庫存數量異動（例如只修正供應商或單價時，仍會有下方單據歷程）。</td></tr>';
+        document.getElementById('invSiAdjustmentAudit').innerHTML = audits.length ? audits.map(a => `
+          <div class="rounded-xl border border-white/10 bg-black/20 p-3">
+            <div class="flex flex-wrap justify-between gap-2"><b class="text-white">${({create:'建立入庫',edit:'整筆修正',delete:'刪除入庫'})[a.event_type] || invEditEscape(a.event_type)}</b><span class="text-slate-500">${invEditEscape(new Date(a.created_at).toLocaleString('zh-TW'))}</span></div>
+            <div class="mt-1">原因：${invEditEscape(a.reason || '—')}</div>
+            <details class="mt-2"><summary class="cursor-pointer text-sky-300">查看修改前後資料快照</summary><pre class="mt-2 whitespace-pre-wrap break-all text-[10px] text-slate-400">${invEditEscape(JSON.stringify({before:a.old_data,after:a.new_data},null,2))}</pre></details>
+          </div>`).join('') : '<div class="text-slate-400">尚無單據修正歷程。</div>';
+      } catch (err) {
+        document.getElementById('invSiMovementRows').innerHTML = `<tr><td colspan="7" class="p-4 text-center text-rose-300">讀取異動紀錄失敗：${invEditEscape(err.message || err)}</td></tr>`;
+        document.getElementById('invSiAdjustmentAudit').innerHTML = '<div class="text-slate-400">無法讀取單據歷程，請確認已執行新版 Supabase SQL。</div>';
       }
-      closeInvStockInEditModal();
-      renderInvProductTable();
-      renderInvStockInHistory();
-      updateInvBadges();
-      alert(`入庫單「${docNo}」已完成整筆修正，${warehouse}庫存已依新明細重新計算。`);
     }
 
     async function adjustInvStockInQty(docNo) {
@@ -3158,19 +3186,21 @@
     async function deleteInvStockIn(docNo) {
       const rec = DB_STOCK_IN.find(r => r.docNo === docNo);
       if (!rec) return;
-      if (!confirm(`確定刪除入庫單「${docNo}」？系統將同步扣回${rec.warehouse} ${rec.totalQty} 件庫存。`)) return;
-      applyInvStockInDelta(rec, -1);
-      await persistInvProductStocksToCloud();
-      if (rec.apVoucherNo) DB_AP_VOUCHERS = DB_AP_VOUCHERS.filter(v => v.voucherNo !== rec.apVoucherNo);
-      const { error } = await supabaseClient.from('stock_ins').delete().eq('doc_no', docNo);
-      if (error) {
-        console.error('刪除雲端入庫單失敗：', error);
-        return alert('雲端刪除失敗，為避免本機與雲端資料不一致，請先重新整理確認：' + error.message);
+      if (rec.apStatus === 'billed') return alert('此入庫單已轉請款，為避免請款憑證失去來源，不允許直接刪除。請先處理請款憑證。');
+      const reason = prompt(`刪除入庫單「${docNo}」的原因：`, '原入庫單登打錯誤');
+      if (reason === null) return;
+      if (!reason.trim()) return alert('請填寫刪除原因，系統才會建立庫存調整紀錄。');
+      if (!confirm(`確定刪除入庫單「${docNo}」？系統會保留刪除前資料，並建立反向庫存異動紀錄。`)) return;
+      try {
+        await callInvStockInRpc('delete_stock_in_document', { p_doc_no:docNo, p_reason:reason.trim() }, '刪除入庫單');
+        await loadDataFromCloud();
+        updateInvBadges();
+        renderInvProductTable();
+        renderInvStockInHistory();
+        alert(`入庫單「${docNo}」已刪除，原始資料與庫存沖回紀錄已保留。`);
+      } catch (err) {
+        alert('刪除失敗：' + err.message + '\n資料庫交易已回復，入庫單與庫存未變更。');
       }
-      DB_STOCK_IN = DB_STOCK_IN.filter(r => r.docNo !== docNo);
-      updateInvBadges();
-      renderInvProductTable();
-      renderInvStockInHistory();
     }
 
     function openInvApModal(docNo) {
