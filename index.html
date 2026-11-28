@@ -1055,8 +1055,12 @@
                   <input type="date" id="invSiDate" value="2026-11-26" class="w-full apple-input p-2.5 font-mono" required />
                 </div>
                 <div>
-                  <label class="block text-slate-300 mb-1">供應商選擇 *</label>
-                  <select id="invSiSupplier" onchange="updateInvSiSupplierBanner()" class="w-full apple-input p-2.5"></select>
+                  <label class="block text-slate-300 mb-1">入庫供應商名稱 *</label>
+                  <input type="text" id="invSiSupplierName" list="invSiSupplierOptions"
+                    oninput="updateInvSiSupplierBanner()" autocomplete="off"
+                    class="w-full apple-input p-2.5" placeholder="輸入或選擇供應商名稱" required />
+                  <datalist id="invSiSupplierOptions"></datalist>
+                  <input type="hidden" id="invSiSupplierId" />
                 </div>
                 <div>
                   <label class="block text-slate-300 mb-1">付款條件 *</label>
@@ -1975,6 +1979,26 @@
           }));
         }
 
+        const { data: siData, error: siErr } = await supabaseClient
+          .from('stock_ins').select('*').order('stock_in_date', { ascending: false });
+        if (!siErr && Array.isArray(siData)) {
+          DB_STOCK_IN = siData.map(r => ({
+            docNo: r.doc_no,
+            date: r.stock_in_date,
+            supplierId: r.vendor_id,
+            supplier: r.vendor_name || DB_SUPPLIERS.find(v => v.id === r.vendor_id)?.companyName || '',
+            paymentTerm: r.payment_term,
+            warehouse: r.warehouse,
+            items: Array.isArray(r.items) ? r.items : [],
+            totalQty: Number(r.total_qty) || 0,
+            totalAmount: Number(r.total_amount) || 0,
+            apStatus: r.ap_status || 'pending',
+            apVoucherNo: r.ap_voucher_no || null
+          }));
+        } else if (siErr && siErr.code !== '42P01') {
+          console.warn('讀取 Supabase stock_ins 失敗：', siErr.message);
+        }
+
         const { data: pData } = await supabaseClient.from('products').select('*');
         if (pData && pData.length > 0) {
           DB_PRODUCTS = pData.map(p => ({
@@ -2083,37 +2107,55 @@
     }
 
     function syncInvSupplierSelects() {
-      const opts = DB_SUPPLIERS.length > 0
-        ? DB_SUPPLIERS.map(s => `<option value="${s.companyName}">${s.companyName} (${s.taxId})</option>`).join('')
-        : `<option value="未指定供應商">尚未建立供應商</option>`;
+      const opts = DB_SUPPLIERS.map(s =>
+        `<option value="${String(s.companyName || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></option>`
+      ).join('');
+      const dataList = document.getElementById('invSiSupplierOptions');
+      if (dataList) dataList.innerHTML = opts;
+
       const prdSel = document.getElementById('invPrdSupplier');
-      const siSel = document.getElementById('invSiSupplier');
       if (prdSel) {
         const prevPrd = prdSel.value;
-        prdSel.innerHTML = opts;
+        prdSel.innerHTML = DB_SUPPLIERS.length
+          ? DB_SUPPLIERS.map(s => `<option value="${String(s.companyName).replace(/"/g, '&quot;')}">${s.companyName} (${s.taxId})</option>`).join('')
+          : '<option value="">尚未建立供應商</option>';
         if (prevPrd && DB_SUPPLIERS.some(s => s.companyName === prevPrd)) prdSel.value = prevPrd;
       }
-      if (siSel) {
-        const prevSi = siSel.value;
-        siSel.innerHTML = opts;
-        if (prevSi && DB_SUPPLIERS.some(s => s.companyName === prevSi)) siSel.value = prevSi;
+
+      const supplierInput = document.getElementById('invSiSupplierName');
+      if (supplierInput && !supplierInput.value && DB_SUPPLIERS.length === 1) {
+        supplierInput.value = DB_SUPPLIERS[0].companyName;
       }
       updateInvSiSupplierBanner();
     }
 
+    function getSelectedInvSupplier() {
+      const name = (document.getElementById('invSiSupplierName')?.value || '').trim();
+      return DB_SUPPLIERS.find(s => s.companyName.trim() === name) || null;
+    }
+
     function updateInvSiSupplierBanner() {
-      const sel = document.getElementById('invSiSupplier');
-      if (!sel) return;
-      const sup = DB_SUPPLIERS.find(s => s.companyName === sel.value);
+      const input = document.getElementById('invSiSupplierName');
+      const idField = document.getElementById('invSiSupplierId');
+      if (!input) return;
+      const typedName = input.value.trim();
+      const sup = getSelectedInvSupplier();
+
       if (!sup) {
-        document.getElementById('invSiSupName').innerText = '—';
+        if (idField) idField.value = '';
+        document.getElementById('invSiSupName').innerText = typedName || '—';
         document.getElementById('invSiSupTax').innerText = '統編：—';
-        document.getElementById('invSiSupContact').innerText = '聯絡窗口：尚未選擇或供應商已移除';
+        document.getElementById('invSiSupContact').innerText = typedName
+          ? '尚未與供應商名錄配對，請選擇名錄中的正式名稱'
+          : '請輸入或選擇供應商名錄中的公司名稱';
         return;
       }
+
+      if (idField) idField.value = sup.id;
       document.getElementById('invSiSupName').innerText = sup.companyName;
       document.getElementById('invSiSupTax').innerText = `統編：${sup.taxId}`;
-      document.getElementById('invSiSupContact').innerText = `聯絡窗口：${sup.contactName} · 電話：${sup.phone} · 地址：${sup.address}`;
+      document.getElementById('invSiSupContact').innerText =
+        `聯絡窗口：${sup.contactName} · 電話：${sup.phone} · 地址：${sup.address}`;
     }
 
     function appendInvSupTag(tag) {
@@ -2736,8 +2778,8 @@
           if (idx === 0) {
             if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) document.getElementById('invSiDate').value = date;
             if (wh === '總倉' || wh === '寄售倉') setInvStockInWh(wh);
-            if (sup && DB_SUPPLIERS.some(s => s.companyName === sup)) {
-              document.getElementById('invSiSupplier').value = sup;
+            if (sup) {
+              document.getElementById('invSiSupplierName').value = sup;
               updateInvSiSupplierBanner();
             }
             if (pay) document.getElementById('invSiPaymentTerm').value = pay;
@@ -2767,10 +2809,29 @@
       });
     }
 
-    function submitInvStockIn(e) {
+    async function persistInvProductStocksToCloud() {
+      const results = await Promise.all(DB_PRODUCTS.map(p =>
+        supabaseClient.from('products').update({
+          main_stock: Number(p.mainStock) || 0,
+          consign_stock: Number(p.consignStock) || 0
+        }).eq('id', p.id)
+      ));
+      const failed = results.find(r => r.error);
+      if (failed?.error) {
+        console.error('產品庫存同步 Supabase 失敗：', failed.error);
+        alert('入庫單已儲存，但部分產品庫存未能同步至雲端：' + failed.error.message);
+      }
+    }
+
+    async function submitInvStockIn(e) {
       e.preventDefault();
       const date = document.getElementById('invSiDate').value;
-      const supplier = document.getElementById('invSiSupplier').value;
+      const selectedSupplier = getSelectedInvSupplier();
+      if (!selectedSupplier) {
+        return alert('請輸入並從供應商名錄選擇有效的供應商名稱；尚未建檔者請先至「供應商檔案建立」新增。');
+      }
+      const supplier = selectedSupplier.companyName;
+      const supplierId = selectedSupplier.id;
       const paymentTerm = document.getElementById('invSiPaymentTerm').value;
       const warehouse = document.getElementById('invSiWarehouse').value;
 
@@ -2797,11 +2858,33 @@
 
       const docNo = `IN-${date.replace(/-/g, '')}-${String(DB_STOCK_IN.length + 1).padStart(3, '0')}`;
       const record = {
-        docNo, date, supplier, paymentTerm, warehouse, items, totalQty, totalAmount,
+        docNo, date, supplier, supplierId, paymentTerm, warehouse, items, totalQty, totalAmount,
         apStatus: 'pending', apVoucherNo: null
       };
 
+      const cloudPayload = {
+        doc_no: docNo,
+        stock_in_date: date,
+        vendor_id: supplierId,
+        vendor_name: supplier,
+        payment_term: paymentTerm,
+        warehouse,
+        items,
+        total_qty: totalQty,
+        total_amount: totalAmount,
+        ap_status: 'pending',
+        ap_voucher_no: null
+      };
+
+      const { error: saveError } = await supabaseClient.from('stock_ins').insert([cloudPayload]);
+      if (saveError) {
+        console.error('入庫單寫入 Supabase 失敗：', saveError);
+        return alert('入庫單尚未過帳，雲端寫入失敗：' + saveError.message +
+          '\\n請確認已建立 stock_ins 資料表及 RLS 權限。');
+      }
+
       applyInvStockInDelta(record, +1);
+      await persistInvProductStocksToCloud();
       DB_STOCK_IN.unshift(record);
 
       document.getElementById('invStockInRowsBody').innerHTML = '';
@@ -2874,7 +2957,7 @@
       }).join('');
     }
 
-    function adjustInvStockInQty(docNo) {
+    async function adjustInvStockInQty(docNo) {
       const rec = DB_STOCK_IN.find(r => r.docNo === docNo);
       if (!rec || !rec.items[0]) return;
       const newQtyStr = prompt(`修正入庫單【${docNo}】首項「${rec.items[0].name}」入庫數量（目前：${rec.items[0].qty}）：`, rec.items[0].qty);
@@ -2887,18 +2970,35 @@
       rec.totalQty = rec.items.reduce((s, x) => s + Number(x.qty || 0), 0);
       rec.totalAmount = rec.items.reduce((s, x) => s + ((Number(x.qty) || 0) * (Number(x.price) || 0)), 0);
       applyInvStockInDelta(rec, +1);
+      await persistInvProductStocksToCloud();
+
+      const { error } = await supabaseClient.from('stock_ins').update({
+        items: rec.items,
+        total_qty: rec.totalQty,
+        total_amount: rec.totalAmount
+      }).eq('doc_no', docNo);
+      if (error) {
+        console.error('更新入庫單雲端資料失敗：', error);
+        alert('本機數量已調整，但雲端更新失敗：' + error.message);
+      }
 
       renderInvProductTable();
       renderInvStockInHistory();
       alert(`已修正「${docNo}」數量並自動同步調整${rec.warehouse}庫存！`);
     }
 
-    function deleteInvStockIn(docNo) {
+    async function deleteInvStockIn(docNo) {
       const rec = DB_STOCK_IN.find(r => r.docNo === docNo);
       if (!rec) return;
       if (!confirm(`確定刪除入庫單「${docNo}」？系統將同步扣回${rec.warehouse} ${rec.totalQty} 件庫存。`)) return;
       applyInvStockInDelta(rec, -1);
+      await persistInvProductStocksToCloud();
       if (rec.apVoucherNo) DB_AP_VOUCHERS = DB_AP_VOUCHERS.filter(v => v.voucherNo !== rec.apVoucherNo);
+      const { error } = await supabaseClient.from('stock_ins').delete().eq('doc_no', docNo);
+      if (error) {
+        console.error('刪除雲端入庫單失敗：', error);
+        return alert('雲端刪除失敗，為避免本機與雲端資料不一致，請先重新整理確認：' + error.message);
+      }
       DB_STOCK_IN = DB_STOCK_IN.filter(r => r.docNo !== docNo);
       updateInvBadges();
       renderInvProductTable();
